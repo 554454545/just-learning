@@ -78,11 +78,11 @@ class McpProtocol:
     def __init__(self) -> None:
         self._next_id = 0
 
-    # 子类实现：发一条消息，返回响应 dict（请求类）
+    # send 一条请求/通知，返回 server 回复的 Json 消息
     async def send(self, method: str, params: dict = None, notify: bool = False) -> dict:
         raise NotImplementedError
 
-    # 分页 -- 限制 Server 一次给的工具个数(MCP方法, 这一页的内容放到哪)
+    # 分页 -- 限制 Server 一次给的工具个数(MCP方法, 条目在响应的哪个键下（"tools" / "resources" / "prompts"）)
     async def _list_paginated(self, method: str, items_attr: str) -> list:
         """分页拉全（对齐 Hermes _paginate_full_list：跟随 nextCursor，上限 50 页）。"""
         items, cursor = [], None
@@ -95,11 +95,12 @@ class McpProtocol:
                 break
         return items
 
-    # ── tools ────────────────────────────────────────────────────
+    # 列出有的工具
     async def list_tools(self) -> list:
         """问 server 有哪些工具（分页拉全）。"""
         return await self._list_paginated("tools/list", "tools")
 
+    # 调用工具
     async def call_tool(self, name: str, args: dict) -> str:
         """调用工具：文本块直接取，image/audio 等多模态块转摘要。"""
         resp = await self.send("tools/call", {"name": name, "arguments": args})
@@ -139,7 +140,7 @@ class McpProtocol:
             return f"错误: {resp['error'].get('message')}"
         return self._format_content(resp.get("result", {}).get("contents", []))
 
-    # ── prompts（MCP 三件套：提示模板）──────────────────────────
+    # 列出所有的提示词模板
     async def list_prompts(self) -> list:
         """列出 server 的提示模板。"""
         return await self._list_paginated("prompts/list", "prompts")
@@ -305,9 +306,8 @@ class MCPManager:
         # ── 懒加载状态（对齐 Hermes）──
         self._connecting: set = set()          # 正在连接的 server（去重）
         self._cooldown_until: dict = {}        # server名 -> 冷却到期时间
-        self._backoff: dict = {}               # server名 -> 失败次数（冷却递增）
-        self._server_connect_errors: dict = {} # server名 -> 最近错误
-        self._schema_cache: dict = self._load_schema_cache()  # 指纹 -> 工具清单
+        self._backoff: dict = {}               # server名 -> 失败次数
+        self._schema_cache: dict = self._load_schema_cache()  # 读出来的工具清单
 
     # ── schema 缓存（磁盘持久化，跨进程复用）────────────────────
     def _load_schema_cache(self) -> dict:
